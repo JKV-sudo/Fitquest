@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Character, User, Quest, FitnessData } from '../types';
+import healthService, { HealthData } from '../services/healthService';
+import authService from '../services/authService';
+import firestoreService from '../services/firestoreService';
 
 interface GameState {
   // User & Auth
@@ -31,6 +34,12 @@ interface GameState {
   addExperience: (amount: number) => void;
   levelUp: () => void;
   
+  // Auth Actions
+  signIn: (email: string, password: string) => Promise<boolean>;
+  signUp: (email: string, password: string, username: string, sportCategory: any) => Promise<boolean>;
+  signOut: () => Promise<void>;
+  initializeAuth: () => Promise<void>;
+  
   // Quest Actions
   setQuests: (quests: Quest[]) => void;
   updateQuestProgress: (questId: string, progress: number) => void;
@@ -39,6 +48,8 @@ interface GameState {
   // Fitness Actions
   updateFitnessData: (data: FitnessData) => void;
   addWorkout: (workout: any) => void;
+  syncHealthData: () => Promise<void>;
+  initializeHealthService: () => Promise<boolean>;
   
   // UI Actions
   setLoading: (loading: boolean) => void;
@@ -63,6 +74,94 @@ export const useGameStore = create<GameState>()(
 
       // User & Auth Actions
       setUser: (user) => set({ user, isAuthenticated: !!user }),
+
+      // Firebase Auth Integration
+      initializeAuth: async () => {
+        set({ isLoading: true });
+        try {
+          const user = await authService.initialize();
+          if (user) {
+            set({ user, isAuthenticated: true });
+            // Load character data
+            const character = await firestoreService.getCharacter(user.id);
+            if (character) {
+              set({ character });
+            }
+          }
+        } catch (error) {
+          console.error('Auth initialization error:', error);
+          set({ error: 'Failed to initialize authentication' });
+        } finally {
+          set({ isLoading: false });
+        }
+      },
+
+      signIn: async (email: string, password: string) => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await authService.signIn(email, password);
+          if (result.success && result.user) {
+            set({ user: result.user, isAuthenticated: true });
+            // Load character data
+            const character = await firestoreService.getCharacter(result.user.id);
+            if (character) {
+              set({ character });
+              // Load user quests
+              const quests = await firestoreService.getUserQuests(result.user.id);
+              get().setQuests(quests);
+            }
+            set({ isLoading: false });
+            return true;
+          } else {
+            set({ error: result.error || 'Sign in failed', isLoading: false });
+            return false;
+          }
+        } catch (error) {
+          set({ error: 'Sign in failed', isLoading: false });
+          return false;
+        }
+      },
+
+      signUp: async (email: string, password: string, username: string, sportCategory: any) => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await authService.signUp(email, password, username, sportCategory);
+          if (result.success && result.user) {
+            set({ user: result.user, isAuthenticated: true });
+            // Load character data
+            const character = await firestoreService.getCharacter(result.user.id);
+            if (character) {
+              set({ character });
+            }
+            set({ isLoading: false });
+            return true;
+          } else {
+            set({ error: result.error || 'Sign up failed', isLoading: false });
+            return false;
+          }
+        } catch (error) {
+          set({ error: 'Sign up failed', isLoading: false });
+          return false;
+        }
+      },
+
+      signOut: async () => {
+        set({ isLoading: true });
+        try {
+          await authService.signOut();
+          set({
+            user: null,
+            isAuthenticated: false,
+            character: null,
+            quests: [],
+            activeQuests: [],
+            completedQuests: [],
+            isLoading: false,
+          });
+        } catch (error) {
+          set({ error: 'Sign out failed', isLoading: false });
+        }
+      },
       
       // Character Actions
       setCharacter: (character) => set({ character }),
@@ -76,40 +175,47 @@ export const useGameStore = create<GameState>()(
 
       addExperience: (amount) =>
         set((state) => {
-          if (!state.character) return state;
+          if (!state.character || !state.user) return state;
           
           const newExp = state.character.experience + amount;
           const expToNext = state.character.experienceToNext;
           
+          let updatedCharacter;
           if (newExp >= expToNext) {
             // Level up!
             const newLevel = state.character.level + 1;
             const newExpToNext = Math.floor(expToNext * 1.5); // Exponential growth
             
-            return {
-              character: {
-                ...state.character,
-                level: newLevel,
-                experience: newExp - expToNext,
-                experienceToNext: newExpToNext,
-                stats: {
-                  ...state.character.stats,
-                  maxHealth: state.character.stats.maxHealth + 10,
-                  maxMana: state.character.stats.maxMana + 5,
-                  strength: state.character.stats.strength + 1,
-                  agility: state.character.stats.agility + 1,
-                  endurance: state.character.stats.endurance + 1,
-                  intelligence: state.character.stats.intelligence + 1,
-                }
+            updatedCharacter = {
+              ...state.character,
+              level: newLevel,
+              experience: newExp - expToNext,
+              experienceToNext: newExpToNext,
+              stats: {
+                ...state.character.stats,
+                maxHealth: state.character.stats.maxHealth + 10,
+                maxMana: state.character.stats.maxMana + 5,
+                strength: state.character.stats.strength + 1,
+                agility: state.character.stats.agility + 1,
+                endurance: state.character.stats.endurance + 1,
+                intelligence: state.character.stats.intelligence + 1,
               }
             };
+          } else {
+            updatedCharacter = {
+              ...state.character,
+              experience: newExp,
+            };
+          }
+
+          // Save character progress to Firebase (fire and forget)
+          if (state.user.id) {
+            firestoreService.updateCharacterXP(state.user.id, updatedCharacter.experience, updatedCharacter.level)
+              .catch(error => console.error('Failed to save character progress to Firebase:', error));
           }
           
           return {
-            character: {
-              ...state.character,
-              experience: newExp,
-            }
+            character: updatedCharacter
           };
         }),
 
@@ -194,6 +300,81 @@ export const useGameStore = create<GameState>()(
             todaysFitnessData: updatedData,
           };
         }),
+
+      // Health Service Integration
+      initializeHealthService: async () => {
+        set({ isLoading: true });
+        try {
+          const success = await healthService.initialize();
+          if (success) {
+            await get().syncHealthData();
+          }
+          set({ isLoading: false });
+          return success;
+        } catch (error) {
+          console.error('Failed to initialize health service:', error);
+          set({ isLoading: false, error: 'Failed to initialize health tracking' });
+          return false;
+        }
+      },
+
+      syncHealthData: async () => {
+        try {
+          const healthData = await healthService.getTodaysData();
+          const { user, character } = get();
+          
+          if (healthData && user) {
+            // Convert HealthData to FitnessData format
+            const fitnessData: FitnessData = {
+              steps: healthData.steps,
+              calories: healthData.calories,
+              activeMinutes: healthData.activeMinutes,
+              workouts: get().todaysFitnessData?.workouts || [],
+              date: healthData.date,
+            };
+            
+            // Update local state
+            get().updateFitnessData(fitnessData);
+            
+            // Save fitness data to Firebase for this user
+            if (user.id) {
+              await firestoreService.saveFitnessData(user.id, fitnessData);
+            }
+            
+            // Calculate and award XP based on new data
+            if (character && user.id) {
+              const xpGained = healthService.calculateXP(healthData);
+              
+              // Only award XP if it's more than what we already have today
+              const today = new Date().toDateString();
+              const lastXPKey = `last_xp_date_${user.id}`;
+              const lastXPAmountKey = `last_xp_amount_${user.id}`;
+              
+              const lastXPDate = await AsyncStorage.getItem(lastXPKey);
+              const lastXP = await AsyncStorage.getItem(lastXPAmountKey);
+              
+              if (lastXPDate !== today || !lastXP || xpGained > parseInt(lastXP)) {
+                const newXP = xpGained - (lastXP ? parseInt(lastXP) : 0);
+                if (newXP > 0) {
+                  get().addExperience(newXP);
+                  
+                  // Save character progress to Firebase
+                  const updatedCharacter = get().character;
+                  if (updatedCharacter) {
+                    await firestoreService.updateCharacterXP(user.id, updatedCharacter.experience, updatedCharacter.level);
+                  }
+                  
+                  await AsyncStorage.setItem(lastXPKey, today);
+                  await AsyncStorage.setItem(lastXPAmountKey, xpGained.toString());
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Failed to sync health data:', error);
+          set({ error: 'Failed to sync health data' });
+        }
+      },
 
       // UI Actions
       setLoading: (isLoading) => set({ isLoading }),

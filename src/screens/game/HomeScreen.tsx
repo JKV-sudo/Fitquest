@@ -21,39 +21,73 @@ export default function HomeScreen() {
     activeQuests,
     updateFitnessData,
     addExperience,
+    initializeHealthService,
+    syncHealthData,
+    isLoading,
+    error,
+    clearError,
   } = useGameStore();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [healthPermissions, setHealthPermissions] = useState<boolean | null>(
+    null
+  );
 
-  // Initialize today's fitness data
+  // Initialize health service and sync data
   useEffect(() => {
-    if (!todaysFitnessData) {
-      const today: FitnessData = {
-        steps: 0,
-        calories: 0,
-        activeMinutes: 0,
-        workouts: [],
-        date: new Date(),
-      };
-      updateFitnessData(today);
-    }
+    const initializeHealth = async () => {
+      try {
+        const success = await initializeHealthService();
+        setHealthPermissions(success);
+
+        if (!success && !todaysFitnessData) {
+          // Fallback to mock data if health permissions not granted
+          const today: FitnessData = {
+            steps: 0,
+            calories: 0,
+            activeMinutes: 0,
+            workouts: [],
+            date: new Date(),
+          };
+          updateFitnessData(today);
+        }
+      } catch (error) {
+        console.error("Error initializing health service:", error);
+        setHealthPermissions(false);
+      }
+    };
+
+    initializeHealth();
   }, []);
+
+  // Sync health data periodically
+  useEffect(() => {
+    if (healthPermissions) {
+      const interval = setInterval(() => {
+        syncHealthData();
+      }, 60000); // Sync every minute
+
+      return () => clearInterval(interval);
+    }
+  }, [healthPermissions]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    // TODO: Fetch real fitness data from health APIs
-    // Simulate fetching data
-    setTimeout(() => {
-      const mockData: FitnessData = {
-        steps: Math.floor(Math.random() * 5000) + 2000,
-        calories: Math.floor(Math.random() * 300) + 100,
-        activeMinutes: Math.floor(Math.random() * 60) + 15,
-        workouts: [],
-        date: new Date(),
-      };
-      updateFitnessData(mockData);
-      setRefreshing(false);
-    }, 1000);
+    clearError();
+
+    try {
+      if (healthPermissions) {
+        await syncHealthData();
+      } else {
+        // Try to reinitialize health service
+        const success = await initializeHealthService();
+        setHealthPermissions(success);
+      }
+    } catch (error) {
+      console.error("Error refreshing health data:", error);
+    }
+
+    setRefreshing(false);
   };
 
   if (!character || !user) {

@@ -16,7 +16,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.Fitquest",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "FitQuest needs location access to show your current position and track your fitness activities."
+        "NSLocationWhenInUseUsageDescription": "FitQuest needs location access to show your current position and track your fitness activities.",
+        "NSHealthShareUsageDescription": "FitQuest needs access to your health data to track your fitness progress and calculate your character's experience points.",
+        "NSHealthUpdateUsageDescription": "FitQuest needs to update your health data to record your fitness achievements and workouts.",
+        "NSMotionUsageDescription": "FitQuest uses motion data to track your steps and physical activities for character progression."
       }
     },
     "android": {
@@ -25,7 +28,15 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACTIVITY_RECOGNITION",
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_EXERCISE",
+        "android.permission.health.READ_DISTANCE",
+        "android.permission.health.READ_ACTIVE_CALORIES_BURNED"
+      ]
     }
   }
 }

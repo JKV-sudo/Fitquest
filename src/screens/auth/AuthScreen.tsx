@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useGameStore } from "../../store/gameStore";
+import { getFirebaseStatus } from "../../utils/firebaseTest";
 
 export default function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -18,8 +19,38 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
+  const [firebaseStatus, setFirebaseStatus] = useState<{
+    configured: boolean;
+    canRead: boolean;
+    canWrite: boolean;
+    projectId: string;
+  } | null>(null);
 
-  const { setUser, setLoading: setGlobalLoading } = useGameStore();
+  const {
+    setUser,
+    setLoading: setGlobalLoading,
+    signIn,
+    signUp,
+    error: authError,
+  } = useGameStore();
+
+  // Test Firebase connection on mount
+  useEffect(() => {
+    const testFirebase = async () => {
+      const status = await getFirebaseStatus();
+      setFirebaseStatus(status);
+
+      if (!status.configured) {
+        console.log("⚠️ Firebase not configured");
+      } else if (!status.canRead || !status.canWrite) {
+        console.log("⚠️ Firebase permissions issue - check Firestore rules");
+      } else {
+        console.log("✅ Firebase ready!");
+      }
+    };
+
+    testFirebase();
+  }, []);
 
   const handleAuth = async () => {
     if (!email || !password || (isSignUp && !username)) {
@@ -31,18 +62,23 @@ export default function AuthScreen() {
     setGlobalLoading(true);
 
     try {
-      // TODO: Implement Firebase auth
-      // For now, create a mock user
-      const mockUser = {
-        id: Date.now().toString(),
-        email,
-        username: isSignUp ? username : email.split("@")[0],
-        createdAt: new Date(),
-        lastLogin: new Date(),
-      };
+      let success = false;
 
-      setUser(mockUser);
-      Alert.alert("Success", `Welcome to FitQuest, ${mockUser.username}!`);
+      if (isSignUp) {
+        // For registration, using Runner as default sport category
+        success = await signUp(email, password, username, "Runner");
+      } else {
+        success = await signIn(email, password);
+      }
+
+      if (success) {
+        Alert.alert("Success", `Welcome to FitQuest!`);
+      } else {
+        Alert.alert(
+          "Error",
+          authError || "Authentication failed. Please try again."
+        );
+      }
     } catch (error) {
       Alert.alert("Error", "Authentication failed. Please try again.");
     } finally {
@@ -76,6 +112,48 @@ export default function AuthScreen() {
             <Text style={styles.subtitle}>
               Your Epic Fitness Adventure Begins
             </Text>
+
+            {/* Firebase Status Indicator */}
+            {firebaseStatus && (
+              <View style={styles.firebaseStatus}>
+                <Ionicons
+                  name={
+                    firebaseStatus.canRead && firebaseStatus.canWrite
+                      ? "checkmark-circle"
+                      : firebaseStatus.configured
+                      ? "warning"
+                      : "close-circle"
+                  }
+                  size={16}
+                  color={
+                    firebaseStatus.canRead && firebaseStatus.canWrite
+                      ? "#10b981"
+                      : firebaseStatus.configured
+                      ? "#f59e0b"
+                      : "#ef4444"
+                  }
+                />
+                <Text
+                  style={[
+                    styles.firebaseStatusText,
+                    {
+                      color:
+                        firebaseStatus.canRead && firebaseStatus.canWrite
+                          ? "#10b981"
+                          : firebaseStatus.configured
+                          ? "#f59e0b"
+                          : "#ef4444",
+                    },
+                  ]}
+                >
+                  {firebaseStatus.canRead && firebaseStatus.canWrite
+                    ? "Firebase Ready"
+                    : firebaseStatus.configured
+                    ? "Check Firestore Rules"
+                    : "Firebase Not Configured"}
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Auth Form */}
@@ -256,6 +334,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
+  },
+  firebaseStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+    gap: 6,
+  },
+  firebaseStatusText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   devButtonText: {
     color: "#fff",
